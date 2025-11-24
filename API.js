@@ -1,15 +1,16 @@
+require('dotenv').config();
 const express = require('express');
 const app = express();
-const port = 5432;
+const port = process.env.PORT || 5432;
 const { Pool } = require('pg'); // Usamos 'pg' en lugar de 'mysql2'
 
-// Configura la conexiÃ³n a la base de datos PostgreSQL
+// Configura la conexión a la base de datos PostgreSQL
 const pool = new Pool({
-  host: 'localhost',
-  user: 'postgres',
-  password: 'root',
-  database: 'HairBooking',
-  port: 5432, // El puerto predeterminado para PostgreSQL
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT,
 });
 
 // Middleware para el anÃ¡lisis del cuerpo de solicitudes en formato JSON
