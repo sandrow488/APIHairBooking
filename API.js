@@ -1,14 +1,14 @@
 const express = require('express');
 const app = express();
-const port = 3000;
+const port = 5432;
 const { Pool } = require('pg'); // Usamos 'pg' en lugar de 'mysql2'
 
 // Configura la conexiÃ³n a la base de datos PostgreSQL
 const pool = new Pool({
   host: 'localhost',
-  user: 'tu_usuario',
-  password: 'tu_contraseÃ±a',
-  database: 'neurocrib',
+  user: 'postgres',
+  password: 'root',
+  database: 'HairBooking',
   port: 5432, // El puerto predeterminado para PostgreSQL
 });
 
