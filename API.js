@@ -4,13 +4,14 @@ const app = express();
 const port = process.env.PORT || 5432;
 const { Pool } = require('pg'); // Usamos 'pg' en lugar de 'mysql2'
 
-// Configura la conexión a la base de datos PostgreSQL
+const connectionString = process.env.DATABASE_URL 
+  ? process.env.DATABASE_URL 
+  : `postgresql://${process.env.DB_USER}:${process.env.DB_PASS}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`;
+
 const pool = new Pool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT,
+  connectionString: connectionString,
+  // Supabase requiere SSL para conexiones externas
+  ssl: { rejectUnauthorized: false } 
 });
 
 // Middleware para el anÃ¡lisis del cuerpo de solicitudes en formato JSON
