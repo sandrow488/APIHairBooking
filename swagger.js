@@ -1,49 +1,68 @@
-const swaggerJsdoc = require("swagger-jsdoc");
+const swaggerJsdoc = require('swagger-jsdoc');
 
 const options = {
-    definition: {
-        openapi: "3.0.0",
-        info: {
-            title: "HairBooking API Pro",
-            version: "1.0.0",
-            description:
-                "API para gestión de HairBooking con Autenticación JWT y OAuth",
-            contact: {
-                name: "Soporte TI",
-                email: "soporte@hairbooking.com",
-            },
-        },
-        servers: [
-            {
-                url: "http://localhost:3000",
-                description: "Servidor Local",
-            },
-        ],
-        components: {
-            securitySchemes: {
-                bearerAuth: {
-                    type: "http",
-                    scheme: "bearer",
-                    bearerFormat: "JWT",
-                    description: "Se requiere un token JWT válido (Access Token de Supabase)."
-                },
-            },
-        },
-        security: [
-            // Aplicar seguridad JWT por defecto a todas las rutas, excepto las de login/registro
-            // Las rutas protegidas requerirán el header: Authorization: Bearer <token>
-            {
-                bearerAuth: [],
-            },
-        ],
-        tags: [
-            { name: "Usuarios", description: "Gestión de perfiles y autenticación." },
-            { name: "Productos y Servicios", description: "Gestión de la oferta de la empresa." },
-        ]
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'HairBooking API',
+      version: '1.0.0',
+      description: 'API RESTful para la gestión de usuarios, autenticación (JWT y OAuth) y servicios de una peluquería, utilizando Supabase como backend.',
     },
-    // Aquí indicamos dónde buscar los comentarios para generar la doc
-    apis: ["./app.js"],
+    servers: [
+      {
+        url: 'http://localhost:3000/api',
+        description: 'Servidor Local de Desarrollo',
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
+      // <-- Aquí van los schemas (IMPORTANTE)
+      schemas: {
+        UsuarioRegistro: {
+          type: 'object',
+          required: ['email', 'password', 'Nombre', 'apellido_1'],
+          properties: {
+            email: { type: 'string', format: 'email' },
+            password: { type: 'string' },
+            Nombre: { type: 'string' },
+            apellido_1: { type: 'string' },
+            apellido_2: { type: 'string' },
+            fecha_nacime: { type: 'string', format: 'date' },
+          },
+        },
+        Login: {
+          type: 'object',
+          required: ['email', 'password'],
+          properties: {
+            email: { type: 'string', format: 'email' },
+            password: { type: 'string' },
+          },
+        },
+        Servicio: {
+          type: 'object',
+          required: ['nombre', 'descripcion', 'precio', 'duracion'],
+          properties: {
+            nombre: { type: 'string' },
+            descripcion: { type: 'string' },
+            precio: { type: 'number', format: 'float' },
+            duracion: { type: 'string', description: 'Formato HH:MM:SS' },
+          },
+        },
+      },
+    },
+    tags: [
+      { name: 'Usuarios', description: 'Operaciones de autenticación y perfiles' },
+      { name: 'Productos y Servicios', description: 'Gestión de servicios de peluquería' },
+    ],
+  },
+  apis: ['./app.js'],
 };
 
-const specs = swaggerJsdoc(options);
-module.exports = specs;
+const swaggerSpecs = swaggerJsdoc(options);
+module.exports = swaggerSpecs;

@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const swaggerUi = require('swagger-ui-express');
-const swaggerSpecs = require('./swagger'); // Importamos tu archivo swagger.js
+const swaggerSpecs = require('./swagger'); // Importa tu swagger corregido
 
 // Inicialización
 const app = express();
@@ -10,8 +10,8 @@ const port = process.env.PORT || 3000;
 
 // 1. Conexión a Supabase (Modo Admin)
 const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
 );
 
 app.use(express.json());
@@ -21,163 +21,309 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
 console.log(`📄 Documentación disponible en http://localhost:${port}/api-docs`);
 
 // --- MIDDLEWARE DE SEGURIDAD (Para rutas protegidas - JWT) ---
-/**
- * Verifica y valida el JWT de Supabase.
- * Nota: El token debe ser el 'access_token' devuelto por /api/login o el OAuth.
- */
 const requireAuth = async (req, res, next) => {
-    const token = req.headers.authorization?.split(' ')[1];
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Falta el token Bearer' });
 
-    // En el backend, usamos supabase.auth.getUser(token) para verificar el JWT
-    const { data: { user }, error } = await supabase.auth.getUser(token);
-    if (error || !user) {
-        return res.status(401).json({ error: 'Token inválido o expirado' });
+    // Verificar el token con Supabase
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data?.user) {
+      return res.status(401).json({ error: 'Token inválido o expirado' });
     }
 
-    req.user = user; // Adjuntamos la info del usuario a la request
+    req.user = data.user;
     next();
+  } catch (err) {
+    console.error('Error en requireAuth:', err);
+    return res.status(401).json({ error: 'Error verificando token' });
+  }
 };
 
 // ------------------------------------
 // --- RUTAS DE AUTENTICACIÓN Y USUARIOS ---
 // ------------------------------------
 
-// [RUTA EXISTENTE] /api/register
-
 /**
- * @swagger
- * /api/login:
- * post:
- * summary: Inicia sesión y obtiene un JWT (Webtoken)
- * tags: [Usuarios]
- * requestBody:
- * required: true
- * content:
- * application/json:
- * schema:
- * type: object
- * required: [email, password]
- * properties:
- * email:
- * type: string
- * password:
- * type: string
- * responses:
- * 200:
- * description: Login exitoso. Devuelve el JWT (access_token)
- * content:
- * application/json:
- * schema:
- * type: object
- * properties:
- * access_token:
- * type: string
- * expires_in:
- * type: integer
- * 400:
- * description: Credenciales inválidas
+ * @openapi
+ * /api/register:
+ *   post:
+ *     summary: Registra un usuario en Supabase Auth y crea su perfil
+ *     tags:
+ *       - Usuarios
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/UsuarioRegistro'
+ *     responses:
+ *       '201':
+ *         description: Usuario creado exitosamente
+ *       '400':
+ *         description: Error en el registro
  */
-app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
+app.post('/api/register', async (req, res) => {
+  const { email, password, Nombre, apellido_1, apellido_2, fecha_nacime } = req.body;
 
-    // Supabase sign in: usa la clave ANÓNIMA por seguridad, pero en este caso 
-    // como usamos una clave ADMIN, debemos usar el auth.signInWithPassword para
-    // simular el flujo normal (en lugar de auth.admin.signIn)
-    const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+  try {
+    // A. Crear usuario en Auth (Sistema de Login)
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name: `${Nombre} ${apellido_1}` }
     });
 
-    if (error) return res.status(400).json({ error: 'Error de Login: ' + error.message });
-
-    // El objeto de sesión contiene el access_token (JWT) y el refresh_token
-    res.json({
-        access_token: data.session.access_token,
-        expires_in: data.session.expires_in,
-    });
-});
-
-// ------------------------------------
-// --- RUTAS DE OAUTH (GITHUB Y GMAIL) ---
-// ------------------------------------
-
-/**
- * @swagger
- * /api/oauth/{provider}:
- * get:
- * summary: Inicia el flujo de autenticación social (GitHub o Google)
- * tags: [Usuarios]
- * description: El cliente debe redirigirse a esta URL para iniciar el flujo. Devuelve la URL de redirección al proveedor.
- * parameters:
- * - in: path
- * name: provider
- * required: true
- * schema:
- * type: string
- * enum: [google, github]
- * description: Proveedor de autenticación
- * responses:
- * 200:
- * description: Devuelve la URL del proveedor para iniciar sesión.
- * 400:
- * description: Proveedor no soportado.
- */
-app.get('/api/oauth/:provider', async (req, res) => {
-    const { provider } = req.params;
-    const allowedProviders = ['google', 'github'];
-
-    if (!allowedProviders.includes(provider)) {
-        return res.status(400).json({ error: 'Proveedor de OAuth no soportado' });
+    if (authError) {
+      console.error('Auth createUser error:', authError);
+      return res.status(400).json({ error: 'Error Auth: ' + authError.message });
     }
 
-    // Nota: El 'redirectTo' es la URL a la que Supabase redirigirá *después* del login.
-    // Usualmente es una URL de tu frontend que maneja la respuesta (ej. /auth/callback)
-    const { data, error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-            redirectTo: 'http://localhost:3000/auth/callback', // Cambia esto por tu URL de frontend
-        },
+    // B. Crear perfil en tabla Usuarios
+    const { error: dbError } = await supabase
+      .from('Usuarios')
+      .insert([
+        {
+          ID_Usuario: authData.user.id,
+          Correo: email,
+          Nombre,
+          apellido_1,
+          apellido_2,
+          fecha_nacime
+        }
+      ]);
+
+    if (dbError) {
+      // Si falla la DB, borramos el usuario de Auth para no dejar basura
+      await supabase.auth.admin.deleteUser(authData.user.id);
+      console.error('DB insert error:', dbError);
+      return res.status(400).json({ error: 'Error Base de Datos: ' + dbError.message });
+    }
+
+    res.status(201).json({
+      message: 'Usuario registrado con éxito',
+      userId: authData.user.id
+    });
+  } catch (err) {
+    console.error('Registro - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno en el registro' });
+  }
+});
+
+/**
+ * @openapi
+ * /api/login:
+ *   post:
+ *     summary: Inicia sesión y obtiene un JWT (Webtoken)
+ *     tags:
+ *       - Usuarios
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/Login'
+ *     responses:
+ *       '200':
+ *         description: Login exitoso. Devuelve el JWT (access_token)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 access_token:
+ *                   type: string
+ *                 expires_in:
+ *                   type: integer
+ *       '400':
+ *         description: Credenciales inválidas
+ */
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
 
     if (error) {
-        return res.status(500).json({ error: 'Error al iniciar OAuth: ' + error.message });
+      console.error('Login error:', error);
+      return res.status(400).json({ error: 'Error de Login: ' + error.message });
     }
 
-    // Redirigimos al cliente a la URL generada por Supabase
-    res.json({ redirectUrl: data.url });
+    res.json({
+      access_token: data.session.access_token,
+      expires_in: data.session.expires_in,
+    });
+  } catch (err) {
+    console.error('Login - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno en el login' });
+  }
 });
 
-// [RUTA EXISTENTE] /api/register
-// [RUTA EXISTENTE] /api/usuarios
-// [RUTA EXISTENTE] /api/usuarios/{id}
+/**
+ * @openapi
+ * /api/oauth/{provider}:
+ *   get:
+ *     summary: Inicia el flujo de autenticación social (GitHub o Google)
+ *     tags:
+ *       - Usuarios
+ *     description: El cliente debe usar la URL devuelta para redirigirse al proveedor. (Solo inicio del flujo)
+ *     parameters:
+ *       - in: path
+ *         name: provider
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [google, github]
+ *         description: Proveedor de autenticación
+ *     responses:
+ *       '200':
+ *         description: Devuelve la URL del proveedor para iniciar sesión.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 redirectUrl:
+ *                   type: string
+ *                   format: url
+ *       '400':
+ *         description: Proveedor no soportado.
+ */
+app.get('/api/oauth/:provider', async (req, res) => {
+  const { provider } = req.params;
+  const allowedProviders = ['google', 'github'];
+
+  if (!allowedProviders.includes(provider)) {
+    return res.status(400).json({ error: 'Proveedor de OAuth no soportado' });
+  }
+
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: 'http://localhost:3000/auth/callback',
+      },
+    });
+
+    if (error) {
+      console.error('OAuth init error:', error);
+      return res.status(500).json({ error: 'Error al iniciar OAuth: ' + error.message });
+    }
+
+    res.json({ redirectUrl: data.url });
+  } catch (err) {
+    console.error('OAuth - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al iniciar OAuth' });
+  }
+});
 
 /**
- * @swagger
+ * @openapi
  * /api/perfil:
- * get:
- * summary: Obtener el perfil del usuario autenticado (Protegida por JWT)
- * tags: [Usuarios]
- * security:
- * - bearerAuth: []
- * responses:
- * 200:
- * description: Perfil del usuario autenticado.
- * 401:
- * description: No autorizado (Token inválido o faltante).
+ *   get:
+ *     summary: Obtener el perfil del usuario autenticado (Protegida por JWT)
+ *     tags:
+ *       - Usuarios
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: Perfil del usuario autenticado.
+ *       '401':
+ *         description: No autorizado (Token inválido o faltante).
  */
 app.get('/api/perfil', requireAuth, async (req, res) => {
-    // req.user contiene la información del usuario del JWT validado
-    const userId = req.user.id; 
+  const userId = req.user.id;
 
+  try {
     const { data, error } = await supabase
-        .from('Usuarios')
-        .select('*')
-        .eq('ID_Usuario', userId)
-        .single();
+      .from('Usuarios')
+      .select('*')
+      .eq('ID_Usuario', userId)
+      .single();
 
-    if (error) return res.status(404).json({ error: 'Perfil no encontrado en DB' });
+    if (error) {
+      console.error('Perfil - DB error:', error);
+      return res.status(404).json({ error: 'Perfil no encontrado en DB' });
+    }
     res.json(data);
+  } catch (err) {
+    console.error('Perfil - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al obtener perfil' });
+  }
+});
+
+
+/**
+ * @openapi
+ * /api/usuarios:
+ *   get:
+ *     summary: Obtener lista de perfiles de la DB (Acceso Público)
+ *     tags:
+ *       - Usuarios
+ *     responses:
+ *       '200':
+ *         description: Lista de usuarios
+ */
+app.get('/api/usuarios', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('Usuarios')
+      .select('*');
+
+    if (error) {
+      console.error('Usuarios list - DB error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+    res.json(data);
+  } catch (err) {
+    console.error('Usuarios list - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al listar usuarios' });
+  }
+});
+
+/**
+ * @openapi
+ * /api/usuarios/{id}:
+ *   get:
+ *     summary: Obtener un perfil por ID (Acceso Público)
+ *     tags:
+ *       - Usuarios
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID del usuario (UUID de Supabase Auth)
+ *     responses:
+ *       '200':
+ *         description: Datos del usuario
+ *       '404':
+ *         description: Usuario no encontrado
+ */
+app.get('/api/usuarios/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('Usuarios')
+      .select('*')
+      .eq('ID_Usuario', req.params.id)
+      .single();
+
+    if (error) {
+      console.error('Usuario get - DB error:', error);
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+    res.json(data);
+  } catch (err) {
+    console.error('Usuario get - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al obtener usuario' });
+  }
 });
 
 // --------------------------------------------
@@ -185,154 +331,182 @@ app.get('/api/perfil', requireAuth, async (req, res) => {
 // --------------------------------------------
 
 /**
- * Basado en tu DB:
- * Tabla: servicios (ID_servicio, nombre, descripcion, precio, duracion)
- * Tabla: productos (ID_producto, ID_empresa, producto, precio, cantidad, servicios)
- * * Usaremos la tabla 'servicios' para el CRUD. Asumiremos que es la entidad principal de 'HairBooking'.
- * Estas rutas deberían ser protegidas (solo para empleados/administradores, no para clientes).
- */
-
-/**
- * @swagger
+ * @openapi
  * /api/servicios:
- * post:
- * summary: Crear un nuevo servicio (Ruta protegida)
- * tags: [Productos y Servicios]
- * security:
- * - bearerAuth: []
- * requestBody:
- * required: true
- * content:
- * application/json:
- * schema:
- * type: object
- * required: [nombre, descripcion, precio, duracion]
- * properties:
- * nombre: { type: string }
- * descripcion: { type: string }
- * precio: { type: number, format: float }
- * duracion: { type: string, format: time }
- * responses:
- * 201:
- * description: Servicio creado exitosamente.
- * 401:
- * description: No autorizado.
+ *   post:
+ *     summary: Crear un nuevo servicio (Ruta protegida)
+ *     tags:
+ *       - Productos y Servicios
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/Servicio'
+ *     responses:
+ *       '201':
+ *         description: Servicio creado exitosamente.
+ *       '401':
+ *         description: No autorizado.
  */
 app.post('/api/servicios', requireAuth, async (req, res) => {
-    const { nombre, descripcion, precio, duracion } = req.body;
+  const { nombre, descripcion, precio, duracion } = req.body;
 
+  try {
     const { data, error } = await supabase
-        .from('servicios')
-        .insert([{ nombre, descripcion, precio, duracion }])
-        .select();
+      .from('servicios')
+      .insert([{ nombre, descripcion, precio, duracion }])
+      .select();
 
-    if (error) return res.status(400).json({ error: error.message });
+    if (error) {
+      console.error('Servicios create - DB error:', error);
+      return res.status(400).json({ error: error.message });
+    }
     res.status(201).json(data[0]);
+  } catch (err) {
+    console.error('Servicios create - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al crear servicio' });
+  }
 });
 
 /**
- * @swagger
+ * @openapi
  * /api/servicios:
- * get:
- * summary: Obtener todos los servicios (Acceso público)
- * tags: [Productos y Servicios]
- * responses:
- * 200:
- * description: Lista de servicios.
+ *   get:
+ *     summary: Obtener todos los servicios (Acceso público)
+ *     tags:
+ *       - Productos y Servicios
+ *     responses:
+ *       '200':
+ *         description: Lista de servicios.
  */
 app.get('/api/servicios', async (req, res) => {
+  try {
     const { data, error } = await supabase
-        .from('servicios')
-        .select('*');
+      .from('servicios')
+      .select('*');
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      console.error('Servicios list - DB error:', error);
+      return res.status(500).json({ error: error.message });
+    }
     res.json(data);
+  } catch (err) {
+    console.error('Servicios list - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al listar servicios' });
+  }
 });
 
 /**
- * @swagger
+ * @openapi
  * /api/servicios/{id}:
- * put:
- * summary: Actualizar un servicio por ID (Ruta protegida)
- * tags: [Productos y Servicios]
- * security:
- * - bearerAuth: []
- * parameters:
- * - in: path
- * name: id
- * required: true
- * schema:
- * type: integer
- * requestBody:
- * required: true
- * content:
- * application/json:
- * schema:
- * type: object
- * properties:
- * nombre: { type: string }
- * descripcion: { type: string }
- * precio: { type: number, format: float }
- * duracion: { type: string, format: time }
- * responses:
- * 200:
- * description: Servicio actualizado.
- * 404:
- * description: Servicio no encontrado.
- * 401:
- * description: No autorizado.
+ *   put:
+ *     summary: Actualizar un servicio por ID (Ruta protegida)
+ *     tags:
+ *       - Productos y Servicios
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID del servicio
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               nombre:
+ *                 type: string
+ *               descripcion:
+ *                 type: string
+ *               precio:
+ *                 type: number
+ *               duracion:
+ *                 type: string
+ *     responses:
+ *       '200':
+ *         description: Servicio actualizado.
+ *       '404':
+ *         description: Servicio no encontrado.
+ *       '401':
+ *         description: No autorizado.
  */
 app.put('/api/servicios/:id', requireAuth, async (req, res) => {
+  try {
     const { data, error } = await supabase
-        .from('servicios')
-        .update(req.body)
-        .eq('ID_servicio', req.params.id)
-        .select();
+      .from('servicios')
+      .update(req.body)
+      .eq('ID_servicio', req.params.id)
+      .select();
 
-    if (error) return res.status(400).json({ error: error.message });
-    if (data.length === 0) return res.status(404).json({ error: 'Servicio no encontrado' });
+    if (error) {
+      console.error('Servicios update - DB error:', error);
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Servicio no encontrado' });
+    }
 
     res.json(data[0]);
+  } catch (err) {
+    console.error('Servicios update - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al actualizar servicio' });
+  }
 });
 
 /**
- * @swagger
+ * @openapi
  * /api/servicios/{id}:
- * delete:
- * summary: Eliminar un servicio por ID (Ruta protegida)
- * tags: [Productos y Servicios]
- * security:
- * - bearerAuth: []
- * parameters:
- * - in: path
- * name: id
- * required: true
- * schema:
- * type: integer
- * responses:
- * 204:
- * description: Servicio eliminado exitosamente.
- * 404:
- * description: Servicio no encontrado.
- * 401:
- * description: No autorizado.
+ *   delete:
+ *     summary: Eliminar un servicio por ID (Ruta protegida)
+ *     tags:
+ *       - Productos y Servicios
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: ID del servicio
+ *     responses:
+ *       '204':
+ *         description: Servicio eliminado exitosamente (No Content).
+ *       '404':
+ *         description: Servicio no encontrado.
+ *       '401':
+ *         description: No autorizado.
  */
 app.delete('/api/servicios/:id', requireAuth, async (req, res) => {
+  try {
     const { error } = await supabase
-        .from('servicios')
-        .delete()
-        .eq('ID_servicio', req.params.id);
+      .from('servicios')
+      .delete()
+      .eq('ID_servicio', req.params.id);
 
-    if (error) return res.status(500).json({ error: error.message });
-    
-    // Supabase no devuelve un indicador de si se eliminó o no, 
-    // pero podemos asumir 204 No Content si la operación es exitosa
-    res.status(204).send(); 
+    if (error) {
+      console.error('Servicios delete - DB error:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    console.error('Servicios delete - error inesperado:', err);
+    res.status(500).json({ error: 'Error interno al eliminar servicio' });
+  }
 });
-
 
 // Iniciar servidor
 app.listen(port, () => {
-    console.log(`🚀 Servidor corriendo en http://localhost:${port}`);
-    console.log(`📚 Swagger Docs en http://localhost:${port}/api-docs`);
+  console.log(`🚀 Servidor corriendo en http://localhost:${port}`);
+  console.log(`📚 Swagger Docs en http://localhost:${port}/api-docs`);
 });
