@@ -1,153 +1,157 @@
 require('dotenv').config();
 const express = require('express');
-const { Pool } = require('pg');
+const { createClient } = require('@supabase/supabase-js');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpecs = require('./swagger'); // Importamos tu archivo swagger.js
 
-// Inicialización de la app
+// Inicialización
 const app = express();
 const port = process.env.PORT || 3000;
 
-console.log("Intentando conectar a la base de datos...");
+// 1. Conexión a Supabase (Modo Admin)
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
-// Configuración de la conexión a PostgreSQL
-// Prioriza DATABASE_URL (Producción/Supabase/Render) sobre variables individuales
-const connectionString = process.env.DATABASE_URL
-  ? process.env.DATABASE_URL
-  : `postgresql://${process.env.DB_USER}:${process.env.DB_PASS}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`;
-
-const pool = new Pool({
-  connectionString: connectionString,
-  // ssl: { rejectUnauthorized: false } // Descomenta esta línea si usas Render, Heroku o Supabase en producción
-});
-
-// Middleware
 app.use(express.json());
 
-// --- RUTAS PARA LA TABLA 'Usuarios' ---
+// 2. Ruta de Documentación Swagger
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpecs));
+console.log(`📄 Documentación disponible en http://localhost:${port}/api-docs`);
 
-// 1. Obtener todos los usuarios
+// --- MIDDLEWARE DE SEGURIDAD (Opcional para rutas protegidas) ---
+const requireAuth = async (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Falta el token Bearer' });
+
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return res.status(401).json({ error: 'Token inválido o expirado' });
+  
+  req.user = user;
+  next();
+};
+
+// --- RUTAS DE USUARIOS ---
+
+/**
+ * @swagger
+ * /api/register:
+ * post:
+ * summary: Registra un usuario en Supabase Auth y crea su perfil
+ * tags: [Usuarios]
+ * requestBody:
+ * required: true
+ * content:
+ * application/json:
+ * schema:
+ * type: object
+ * required: [email, password, Nombre, apellido_1]
+ * properties:
+ * email:
+ * type: string
+ * password:
+ * type: string
+ * Nombre:
+ * type: string
+ * apellido_1:
+ * type: string
+ * fecha_nacime:
+ * type: string
+ * format: date
+ * responses:
+ * 201:
+ * description: Usuario creado exitosamente
+ * 400:
+ * description: Error en el registro
+ */
+app.post('/api/register', async (req, res) => {
+  const { email, password, Nombre, apellido_1, apellido_2, fecha_nacime } = req.body;
+
+  // A. Crear usuario en Auth (Sistema de Login)
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true, // Auto-confirmar email para pruebas
+    user_metadata: { full_name: `${Nombre} ${apellido_1}` }
+  });
+
+  if (authError) return res.status(400).json({ error: 'Error Auth: ' + authError.message });
+
+  // B. Crear perfil en tabla Usuarios (Tu base de datos)
+  const { error: dbError } = await supabase
+    .from('Usuarios')
+    .insert([
+      {
+        ID_Usuario: authData.user.id, // Usamos el mismo ID que Auth
+        Correo: email,
+        Nombre,
+        apellido_1,
+        apellido_2,
+        fecha_nacime
+      }
+    ]);
+
+  if (dbError) {
+    // Si falla la DB, borramos el usuario de Auth para no dejar basura
+    await supabase.auth.admin.deleteUser(authData.user.id);
+    return res.status(400).json({ error: 'Error Base de Datos: ' + dbError.message });
+  }
+
+  res.status(201).json({ 
+    message: 'Usuario registrado con éxito', 
+    userId: authData.user.id 
+  });
+});
+
+/**
+ * @swagger
+ * /api/usuarios:
+ * get:
+ * summary: Obtener lista de perfiles
+ * tags: [Usuarios]
+ * responses:
+ * 200:
+ * description: Lista de usuarios
+ */
 app.get('/api/usuarios', async (req, res) => {
-  try {
-    // NOTA: Usamos comillas dobles en "Usuarios" porque PostgreSQL es case-sensitive si la tabla se creó con mayúsculas
-    const results = await pool.query('SELECT * FROM "Usuarios"');
-    res.json({ usuarios: results.rows });
-  } catch (err) {
-    console.error('Error al obtener usuarios:', err);
-    res.status(500).json({ error: 'Error al obtener usuarios' });
-  }
+  const { data, error } = await supabase
+    .from('Usuarios')
+    .select('*');
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-// 2. Obtener un usuario por su ID_Usuario
+/**
+ * @swagger
+ * /api/usuarios/{id}:
+ * get:
+ * summary: Obtener un perfil por ID
+ * tags: [Usuarios]
+ * parameters:
+ * - in: path
+ * name: id
+ * required: true
+ * schema:
+ * type: string
+ * responses:
+ * 200:
+ * description: Datos del usuario
+ */
 app.get('/api/usuarios/:id', async (req, res) => {
-  const userId = req.params.id;
-  try {
-    const results = await pool.query('SELECT * FROM "Usuarios" WHERE "ID_Usuario" = $1', [userId]);
-    
-    if (results.rows.length === 0) {
-      return res.status(404).json({ message: 'Usuario no encontrado' });
-    }
-    res.json({ user: results.rows[0] });
-  } catch (err) {
-    console.error('Error al obtener el usuario:', err);
-    res.status(500).json({ error: 'Error al obtener el usuario' });
-  }
-});
+  const { data, error } = await supabase
+    .from('Usuarios')
+    .select('*')
+    .eq('ID_Usuario', req.params.id)
+    .single();
 
-// 3. Crear un nuevo usuario
-app.post('/api/usuarios', async (req, res) => {
-  const {
-    ID_Usuario,
-    password,
-    Correo,
-    Nombre,
-    apellido_1,
-    apellido_2,
-    fecha_nacime // Asumo que este es el nombre exacto de tu columna según tu código anterior
-  } = req.body;
-
-  // Validación básica
-  if (!ID_Usuario || !password || !Correo || !Nombre || !apellido_1 || !fecha_nacime) {
-    return res.status(400).json({ 
-      error: 'Faltan campos obligatorios (ID_Usuario, password, Correo, Nombre, apellido_1, fecha_nacime)' 
-    });
-  }
-
-  const query = `
-    INSERT INTO "Usuarios"
-    ("ID_Usuario", "password", "Correo", "Nombre", "apellido_1", "apellido_2", "fecha_nacime")
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
-    RETURNING *
-  `;
-  
-  const values = [ID_Usuario, password, Correo, Nombre, apellido_1, apellido_2, fecha_nacime];
-
-  try {
-    const results = await pool.query(query, values);
-    res.status(201).json({ message: 'Usuario creado con éxito', user: results.rows[0] });
-  } catch (err) {
-    console.error('Error al crear el usuario:', err);
-    if (err.code === '23505') { // Código de error de Postgres para violación de unique constraint
-       return res.status(409).json({ error: 'El ID_Usuario o Correo ya existe' });
-    }
-    res.status(500).json({ error: 'Error al crear el usuario' });
-  }
-});
-
-// 4. Actualizar un usuario
-app.put('/api/usuarios/:id', async (req, res) => {
-  const userId = req.params.id;
-  const {
-    password,
-    Correo,
-    Nombre,
-    apellido_1,
-    apellido_2,
-    fecha_nacime
-  } = req.body;
-
-  const query = `
-    UPDATE "Usuarios"
-    SET "password" = $1, "Correo" = $2, "Nombre" = $3, "apellido_1" = $4, "apellido_2" = $5, "fecha_nacime" = $6
-    WHERE "ID_Usuario" = $7
-    RETURNING *
-  `;
-
-  const values = [password, Correo, Nombre, apellido_1, apellido_2, fecha_nacime, userId];
-
-  try {
-    const results = await pool.query(query, values);
-    if (results.rows.length === 0) {
-      return res.status(404).json({ message: 'Usuario no encontrado para actualizar' });
-    }
-    res.json({ message: 'Usuario actualizado con éxito', user: results.rows[0] });
-  } catch (err) {
-    console.error('Error al actualizar el usuario:', err);
-    res.status(500).json({ error: 'Error al actualizar el usuario' });
-  }
-});
-
-// 5. Eliminar un usuario
-app.delete('/api/usuarios/:id', async (req, res) => {
-  const userId = req.params.id;
-  
-  try {
-    const results = await pool.query('DELETE FROM "Usuarios" WHERE "ID_Usuario" = $1', [userId]);
-    
-    if (results.rowCount === 0) {
-      return res.status(404).json({ message: 'Usuario no encontrado' });
-    }
-    res.json({ message: 'Usuario eliminado con éxito' });
-  } catch (err) {
-    console.error('Error al eliminar el usuario:', err);
-    if (err.code === '23503') { // Violación de Foreign Key
-      return res.status(400).json({ 
-        error: 'No se puede eliminar el usuario porque tiene registros relacionados (Empresa o Clientes).' 
-      });
-    }
-    res.status(500).json({ error: 'Error al eliminar el usuario' });
-  }
+  if (error) return res.status(404).json({ error: 'Usuario no encontrado' });
+  res.json(data);
 });
 
 // Iniciar servidor
 app.listen(port, () => {
-  console.log(`El servidor está escuchando en el puerto ${port}`);
+  console.log(`🚀 Servidor corriendo en http://localhost:${port}`);
+  console.log(`📚 Swagger Docs en http://localhost:${port}/api-docs`);
 });
