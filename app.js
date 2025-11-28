@@ -83,7 +83,7 @@ app.post('/api/register', async (req, res) => {
 
     // B. Crear perfil en tabla Usuarios
     const { error: dbError } = await supabase
-      .from('Usuarios')
+      .from('usuarios')
       .insert([
         {
           ID_Usuario: authData.user.id,
@@ -242,7 +242,7 @@ app.get('/api/perfil', requireAuth, async (req, res) => {
 
   try {
     const { data, error } = await supabase
-      .from('Usuarios')
+      .from('usuarios')
       .select('*')
       .eq('ID_Usuario', userId)
       .single();
@@ -273,7 +273,7 @@ app.get('/api/perfil', requireAuth, async (req, res) => {
 app.get('/api/usuarios', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('Usuarios')
+      .from('usuarios')
       .select('*');
 
     if (error) {
@@ -310,7 +310,7 @@ app.get('/api/usuarios', async (req, res) => {
 app.get('/api/usuarios/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('Usuarios')
+      .from('usuarios')
       .select('*')
       .eq('ID_Usuario', req.params.id)
       .single();
